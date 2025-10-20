@@ -1,180 +1,103 @@
-from agents import Agent, Runner, function_tool
-
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
-import json
+from agents import Agent, Runner, function_tool
 
-# =========================
-# Strict input/output models
-# =========================
+# --- Strict models for the composer ---
 
-
-class Metric(BaseModel):
-    label: str = Field(..., description="Metric name, e.g., 'Users'")
-    value: str = Field(..., description="Metric value, e.g., '44,000+; ~25% MAU'")
-
-class TractionItems(BaseModel):
-    items: List[Metric] = Field(..., description="List of traction metrics as label/value pairs")
-
-class BridgeAngleInput(BaseModel):
-    themes: List[str] = Field(default_factory=list, description="Portfolio themes: marketplace, ai-ml, etc.")
-    hooks: List[str] = Field(default_factory=list, description="Investor hooks/background keywords")
-    firm: str = Field(..., description="Investor firm")
-    product_one_liner: str = Field(..., description="Jetzy one-liner")
-    positioning: str = Field(..., description="Jetzy positioning sentence")
-
-class BridgeAngle(BaseModel):
-    bridge: str
-    angle: str
+from typing import Optional, Literal
+from pydantic import BaseModel, Field
+from agents import Agent, Runner, function_tool
 
 class EmailComposeInput(BaseModel):
-    investor_first_name: str
-    firm: str
-    context_event: Optional[str] = "our recent conversation"
-    bridge: str
-    angle: str
-    one_liner: str
-    positioning: str
-    differentiators: List[str]
-    traction_items: List[Metric]
-    partnerships: List[str]
+    investor_first_name: str = Field(..., description="e.g., Everett")
+    firm: str = Field(..., description="e.g., Legendary Ventures")
+    context_event: str = Field(..., description='e.g., "7BC Global VC Demo Day (NYC)"')
+
+    # free-text lines for the two personalization sentences:
+    investor_background_line: str = Field(
+        ..., description='e.g., "former operator and technical founder with expertise in ML and full-stack development"'
+    )
+    firm_focus_line: str = Field(
+        ..., description='e.g., "marketplace and AI/ML-driven investments"'
+    )
+
+    # traction + proof
+    users_line: str = Field(..., description='e.g., "44,000+ users with ~25% MAU"')
+    growth_line: str = Field(..., description='e.g., "entirely organic growth ($0 paid marketing)"')
+    revenue_line: str = Field(..., description='e.g., "~$450K in early B2B revenue"')
+    pipeline_line: str = Field(..., description='e.g., "$2M+ pipeline"')
+    partnerships_line: str = Field(..., description='e.g., "China and India"')
+
+    # optional tagline
+    one_liner: Optional[str] = Field(
+        None, description='Optional: "Social-first, AI-powered platform for authentic travel experiences."'
+    )
+
+    # signature + CTA
+    meeting_preference: Literal["Either", "Zoom", "Coffee"] = "Either"
     from_name: str = "Shama"
-    from_title: str = ""
-    from_company: str = "Jetzy"
-    tone: Literal["crisp", "warm", "short"] = "crisp"
 
 class EmailOut(BaseModel):
     subject: str
     body: str
 
-class SoWhatInput(BaseModel):
-    email_text: str
-    investor_first_name: str
-    firm_name: str
-
-class SkimInput(BaseModel):
-    email_text: str
-
-class Issues(BaseModel):
-    issues: List[str] = Field(default_factory=list)
-
-# ===========
-# Tools (strict)
-# ===========
-
-@function_tool
-def traction_bullets(payload: TractionItems) -> str:
-    """Return formatted bullets from traction items."""
-    return "\n".join(f"• {m.label}: {m.value}" for m in payload.items)
-
-@function_tool
-def bridge_and_angle(payload: BridgeAngleInput) -> BridgeAngle:
-    """Produce a personalized bridge (why them + why now) and a suggested angle."""
-    firm_pattern = " and ".join(payload.themes) if payload.themes else "community-driven marketplaces"
-    hook_phrase = ", ".join(payload.hooks) if payload.hooks else "your background"
-    bridge = (
-        f"{payload.firm} repeatedly backs {firm_pattern}. "
-        f"Jetzy is {payload.product_one_liner} — the {payload.positioning}. "
-        f"Given {hook_phrase}, you'll appreciate our AI/ML engine and social graph flywheel."
-    )
-    lower_themes = [t.lower() for t in payload.themes]
-    if "ai-ml" in lower_themes or any(h.lower() in ("ai", "ml", "machine learning") for h in payload.hooks):
-        angle = "Lead with technical moat (AI/ML + social graph) and community flywheel."
-    elif "marketplace" in lower_themes:
-        angle = "Position as category-defining community marketplace in travel/experiences."
-    else:
-        angle = "Emphasize community defensibility and traction as de-risking signals."
-    return BridgeAngle(bridge=bridge, angle=angle)
-
 @function_tool
 def compose_email(payload: EmailComposeInput) -> EmailOut:
-    """Compose the investor email (subject + body with bullets + CTA)."""
-    subject = f"Jetzy — Following up from {payload.context_event}"
-    greeting = "Hi"
-    if payload.tone == "warm":
-        greeting = "Hi"
-    elif payload.tone == "short":
-        greeting = "Hi"
+    subject = f"Jetzy - Following up from the {payload.context_event}"
+    title = f"Email Draft for {payload.investor_first_name} ({payload.firm})"
 
-    intro = (
-        f"{greeting} {payload.investor_first_name},\n\n"
-        f"It was great meeting you at {payload.context_event}. I took a closer look at {payload.firm}'s portfolio and the fit is compelling. "
-        f"{payload.bridge}"
+    p1 = (
+        f"Hi {payload.investor_first_name},\n\n"
+        f"It was a pleasure meeting you at the {payload.context_event} and learning about your background as a "
+        f"{payload.investor_background_line}, as well as {payload.firm}'s focus on {payload.firm_focus_line}. "
+        f"As we discussed, our work at Jetzy aligns closely with that thesis."
     )
 
-    diffs = ", ".join(payload.differentiators)
-    what_is = (
-        f"\n\nJetzy in one line: {payload.one_liner}\n\n"
-        f"Instead of a simple booking tool, we're the {payload.positioning}\n"
-        f"For a technical audience, the core is our {diffs}. "
-        f"({payload.angle})"
+    p2 = (
+        "\n\nWe are building the social layer for the massive travel and leisure industry. "
+        "Jetzy is an AI-powered platform where users can not only find unique experiences but also connect with "
+        "like-minded people to enjoy them together. Our initial focus is on \"travel and experience seekers\" — "
+        "a fast-growing segment seeking authentic, personalized travel."
     )
 
-    bullets = "\n".join(f"• {m.label}: {m.value}" for m in payload.traction_items)
-    traction = (
-        f"\n\nOur traction shows the model is working:\n{bullets}\n\n"
-        f"Key partnerships: {', '.join(payload.partnerships)}."
+    p3 = (
+        f"\n\nThe company is led by experienced leadership with deep expertise in AI and marketplace dynamics. "
+        f"We’ve achieved strong, capital-efficient traction, growing to {payload.users_line}, "
+        f"{payload.growth_line}. We’ve generated {payload.revenue_line}, built a {payload.pipeline_line}, "
+        f"and established partnerships with major tourism boards across {payload.partnerships_line}."
     )
 
-    closing = (
-        "\n\nWe’re building the definitive platform for the experience economy, with community as our moat.\n"
-        "Would you be open to a brief call next week to dive deeper?\n\n"
-        f"Best regards,\n{payload.from_name}\n{payload.from_title}\n{payload.from_company}"
-    )
+    one_liner_txt = f"\n\nJetzy in one line: {payload.one_liner}" if payload.one_liner else ""
 
-    return EmailOut(subject=subject, body=f"Subject: {subject}\n\n{intro}{what_is}{traction}{closing}")
+    if payload.meeting_preference == "Zoom":
+        cta = "I’d love to set up a Zoom call to walk you through our journey at a time that works for you."
+    elif payload.meeting_preference == "Coffee":
+        cta = "I’d love to set up a coffee chat to walk you through our journey at a time that works for you."
+    else:
+        cta = "I’d love to set up a Zoom call or coffee chat to walk you through our journey at a time that works for you."
 
-@function_tool
-def so_what_check(payload: SoWhatInput) -> Issues:
-    """Personalization & value checks."""
-    txt = payload.email_text
-    issues: List[str] = []
-    if payload.investor_first_name.lower() not in txt.lower():
-        issues.append("Personalization: investor first name is missing.")
-    if payload.firm_name.lower() not in txt.lower():
-        issues.append("Personalization: firm name is missing.")
-    if "Jetzy" not in txt:
-        issues.append("Clarity: Jetzy is not clearly introduced.")
-    if "call" not in txt.lower() and "meeting" not in txt.lower():
-        issues.append("CTA: add a specific ask (e.g., brief call next week?).")
-    if "• " not in txt and "- " not in txt:
-        issues.append("Proof points: add bullet points for traction.")
-    return Issues(issues=issues)
+    closing = f"\n\n{cta}\n\nSincerely,\n{payload.from_name}"
 
-@function_tool
-def skim_check(payload: SkimInput) -> Issues:
-    """Scannability checks: subject, bullets, paragraph length."""
-    txt = payload.email_text
-    issues: List[str] = []
-    lines = txt.splitlines()
-    if not lines or not lines[0].lower().startswith("subject:"):
-        issues.append("Subject: first line should start with 'Subject: ...'.")
-    if "• " not in txt and "- " not in txt:
-        issues.append("Skim: include bullet points for traction.")
-    if any(len(p) > 600 for p in txt.split("\n\n")):
-        issues.append("Skim: shorten long paragraphs for faster reading.")
-    return Issues(issues=issues)
+    body = f"{title}\nSubject: {subject}\n\n{p1}{p2}{p3}{one_liner_txt}{closing}"
+    return EmailOut(subject=subject, body=body)
 
 # =====================
 # Agent configuration
 # =====================
 
 INSTRUCTIONS = """
-You are Jetzy’s Investor Outreach Agent. Follow this strict, tool-driven workflow:
-
-1) If bridge/angle aren’t provided by the user, call bridge_and_angle(...) to generate them.
-2) Call compose_email(...) with the provided inputs to draft the email.
-3) Call so_what_check(...) and skim_check(...) on the draft.
-4) If any issues are returned, revise the draft and re-check once.
-Constraints:
-- Tone: crisp, investor-friendly, confident.
-- Never invent metrics. Only use user-provided inputs.
-Return ONLY the final email body (first line must be 'Subject: ...').
+You are Jetzy’s Investor Outreach Agent. Use the provided tools. When composing an email,
+you MUST call compose_email(...) and follow its exact structure. Do not free-style the format.
+Return only the final email body (starting with 'Email Draft for ...' then 'Subject: ...').
 """
+
 agent = Agent(
     name="Jetzy Investor Email Agent",
     instructions=INSTRUCTIONS,
-    tools=[traction_bullets, bridge_and_angle, compose_email, so_what_check, skim_check],
+    tools=[
+        # keep any other tools you already had, e.g. traction_bullets, bridge_and_angle, so_what_check, skim_check
+        compose_email,
+    ],
     model="gpt-4.1-mini",
 )
 
