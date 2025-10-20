@@ -1,85 +1,76 @@
-import json, os, asyncio
-from typing import Any, Dict, List, Union
+import json
+import asyncio
+from typing import Any, Dict, Optional
 from agents import Runner
 from .agent_core import agent
 
-DEBUG = os.getenv("JETZY_DEBUG", "0") == "1"
+def _safe_getattr(obj: Any, name: str) -> Optional[Any]:
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return None
 
-def _flatten_dict_texts(d: dict) -> List[str]:
-    out: List[str] = []
-    stack: List[Union[dict, list, tuple]] = [d]
-    while stack:
-        cur = stack.pop()
-        if isinstance(cur, dict):
-            for k, v in cur.items():
-                if isinstance(v, str) and k in {"output_text","final_output","text","content","message"}:
-                    out.append(v)
-                elif isinstance(v, (dict, list, tuple)):
-                    stack.append(v)
-        elif isinstance(cur, (list, tuple)):
-            for v in cur:
-                if isinstance(v, str):
-                    out.append(v)
-                elif isinstance(v, (dict, list, tuple)):
-                    stack.append(v)
-    return out
-
-def _extract_text_from_result(result: Any) -> str:
+def _extract_text(result: Any) -> str:
+    """
+    Be ultra-conservative: try a few common attributes only.
+    Do NOT traverse nested structures to avoid touching SDK-internal attrs
+    (like .output) that may not exist on older/newer builds.
+    """
     # direct string
     if isinstance(result, str):
         return result
 
-    # common single-string attrs
-    for attr in ("final_output","output_text","text","message"):
-        val = getattr(result, attr, None)
+    # most common single-string attributes
+    for attr in ("final_output", "output_text", "text"):
+        val = _safe_getattr(result, attr)
         if isinstance(val, str) and val.strip():
             return val
 
-    # list-like containers
-    for attr in ("output","outputs","items","messages","events","content","choices"):
-        val = getattr(result, attr, None)
-        if isinstance(val, (list, tuple)):
-            buf: List[str] = []
-            for it in val:
-                if hasattr(it, "type") and getattr(it, "type") == "output_text" and hasattr(it, "text"):
-                    buf.append(getattr(it, "text"))
-                elif hasattr(it, "message") and hasattr(getattr(it, "message"), "content"):
-                    msg = getattr(it, "message")
-                    if isinstance(msg.content, str):
-                        buf.append(msg.content)
-                elif isinstance(it, dict):
-                    if it.get("type") == "output_text" and isinstance(it.get("text"), str):
-                        buf.append(it["text"])
-                    elif isinstance(it.get("content"), str):
-                        buf.append(it["content"])
-                elif isinstance(it, str):
-                    buf.append(it)
-            if buf:
-                return "\n".join(buf)
+    # OpenAI-style message holder (very common)
+    # - result.message.content (obj)
+    # - result["message"]["content"] (dict-like)
+    msg = _safe_getattr(result, "message")
+    if msg is not None:
+        content = _safe_getattr(msg, "content")
+        if isinstance(content, str) and content.strip():
+            return content
 
-    # dict-like dumps
-    for to_dict in ("model_dump","dict","__dict__"):
-        if hasattr(result, to_dict):
-            try:
-                data = getattr(result, to_dict)
-                data = data() if callable(data) else data
-                if isinstance(data, dict):
-                    texts = _flatten_dict_texts(data)
-                    if texts:
-                        return "\n".join(texts)
-            except Exception:
-                pass
+    # very conservative dict-like fallback (only top level)
+    to_dict = None
+    for name in ("model_dump", "dict"):
+        try:
+            maybe = getattr(result, name, None)
+            if callable(maybe):
+                d = maybe()
+            else:
+                d = maybe
+            if isinstance(d, dict):
+                to_dict = d
+                break
+        except Exception:
+            pass
 
-    # nested tuple/list
-    if isinstance(result, (list, tuple)):
-        parts = [ _extract_text_from_result(x) for x in result ]
-        parts = [ p for p in parts if isinstance(p, str) and p.strip() ]
-        if parts:
-            return "\n".join(parts)
+    if isinstance(to_dict, dict):
+        # look for a few well-known keys only (top-level)
+        for key in ("final_output", "output_text", "text"):
+            val = to_dict.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        # message.content at top level (dict-like)
+        msg = to_dict.get("message")
+        if isinstance(msg, dict):
+            content = msg.get("content")
+            if isinstance(content, str) and content.strip():
+                return content
 
+    # last resort
     return str(result)
 
 def draft_email(payload: Dict) -> str:
+    """
+    Streamlit-safe runner: create a fresh event loop and use a very
+    defensive extractor that avoids accessing SDK-internal attributes.
+    """
     user_msg = {"role": "user", "content": json.dumps(payload)}
 
     async def _run_once():
@@ -96,15 +87,4 @@ def draft_email(payload: Dict) -> str:
             pass
         loop.close()
 
-    text = _extract_text_from_result(result)
-
-    if DEBUG:
-        try:
-            import streamlit as st
-            st.subheader("DEBUG: RunResult (type & repr)")
-            st.write(type(result))
-            st.write(result)
-        except Exception:
-            pass
-
-    return text
+    return _extract_text(result)
